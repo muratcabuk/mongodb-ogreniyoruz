@@ -1,0 +1,3 @@
+use mymongodb
+
+db.restaurant.updateOne( { "name": "Central Perk Cafe" },  {$unset: ["Closed"]} );
