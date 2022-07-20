@@ -133,3 +133,4 @@ session.endSession();
 - https://www.youtube.com/watch?v=x5UuQL9rA1c
 - https://martin.kleppmann.com/2015/05/11/please-stop-calling-databases-cp-or-ap.html
 - https://dzone.com/articles/mongodb-consistency-levels-cappaclec-theorem
+- https://dzone.com/articles/mongodb-consistency-levels-cappaclec-theorem
