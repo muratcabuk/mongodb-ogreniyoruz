@@ -37,7 +37,7 @@ Doğru yapılacak read ve write concern ayarları ile beklentilerimizi karşıla
    -  **Snaphot**: MongoDb versiyon 5 ile gelen özelliktir ve multi document transaction'larda kullanınılır. Snapshot, serializable bir transaction'da bütün işlemlerin bir transaction'da yapılması ve bu sırada ilgili kaydın/kayıtların kilitlenmesi aynı veri üzerinde işlem yapılmasını engellemesi sebebiyle dağınık yapıdaki veritabanlarında kullanılmaktadır. Ancak birçok ilişkisel veritabanı da yeni versiyonlarında bu problemi çözmek amacıyla snapshot izolasyonu desteklemeye başlamışlarıdr. ACID prensiplerindeki I izolasyonu ifade etmektedir.MongoDB bunu iki farklı şekilde yapar. Transaction durumunda yapılan işlemler verinin bir snapshot'ı alınarak yapılır. Bu esnada asıl veri üzerinde diğer oturumlar okuma veya yazma yapabilirler (tabi bu veritabanının yeteneklerine göre kısıtlanabilir). Snapshot üzerinde işlemler tamamlandığında eğer verinin ilk alınmasında sonra değişikliğe uğramadıysa veri kaydedilir (transaction commit), eğer bu arada veri değiştiyse transaction conflict gerekçesiyle iptal edilir. Daha fazla detay almak için [şu sayfayı](https://www.mongodb.com/docs/manual/reference/read-concern-snapshot/#mongodb-readconcern-readconcern.-snapshot-) ziyaret ediniz.
 -  **Transaction-level write concern (write acknowledgement)** :  Yazma işlemi yapıldıktan sonra MongoDB yazma işlemi hakkında bilgi (acknowledgement) dönmektedir. Dönülecek bilgide neleri beklediğimizi daha doğrusu sunucunun yazma işlemini belli bir timeout süresi içinde hangi level'da yapacağını belirlememiz sağlıyor. Özellikle bir cluster yapımız varsa bu ayarı beklentilerimizi karşılayacak şekilde yapmamız çok önemli.
    -  **w**: Yazma işleminin cluster yapıda kaç node'a yayıldığının onayını istediğimiz seçenektir. eğer "0" dersek bir onay istemediğimiz anlamına gelir. Yani "fire and forget" gönder ve unut. "1" dersek replica set üzerinde primary üzerine yazılması onayını istemiş oluruz. 1'den büyük vereceğimiz her değer kaç adet secondary'ye kaydolması gerektiğinin onayını almamızı sağlar. Eğer rakam yerine majority yazarsak (ki bu default değerdir) bütün sunuculara yazıldığının onayını almış oluruz. 
-   -  **j**: bu opsiyonu anlamak için öncelikle journaling kavramını anlamak gerekiyor. Journaling yazma işlemi sisteme geldiğinde (vakit alacağı için) gerçek yazma işlemini yapmadan önce yapılacak işlemin disk üzerine loglanması işlemidir. Daha fazla detay için [şu linki](https://www.mongodb.com/docs/manual/tutorial/manage-journaling) ziyaret ediniz. Amaç bir crash anında verinin korunmasını sağlamak ve bazı durumlarda hız sağlamak içindir. Eğer bu değer false olarak ayarlanırsa journaling prosesi onayı istememiş oluruz. Şunu da bilmemiz gerekiyor bunu true bile yapsak replica set primary'nin crash olması durumunda transaction'ın roll back yapılmayacağı anlamına gelmez. 
+   -  **j**: bu opsiyonu anlamak için öncelikle journaling kavramını anlamak gerekiyor. Journaling yazma işlemi sisteme geldiğinde (vakit alacağı için) gerçek yazma işlemini yapmadan önce yapılacak işlemin disk üzerine loglanması işlemidir. Daha fazla detay için [şu linki](https://www.mongodb.com/docs/manual/tutorial/manage-journaling) ziyaret ediniz. Amaç bir crash anında verinin korunmasını sağlamak ve bazı durumlarda hız sağlamak içindir. Eğer bu değer false olarak ayarlanırsa journaling prosesi onayı istememiş oluruz. Şunu da bilmemiz gerekiyor bunu true bile yapsak replica set primary'nin crash olması durumunda transaction'ın roll back yapılmayacağı anlamına gelmez. Sharded cluster'da bu parametrenin default değeri false olarak işaretlidir.
 
 ![journaling.png](files/journaling.png)
 
@@ -60,6 +60,7 @@ Dikkat etmemiz gereken bazı kısıtlar var.
 - Versiyon 4.2 ve öncesinde Transaction içinde collection oluşturamayız. 4.4 den itibaren oluşturmak mümkün artık. Ancak bu halen cross shard ortamlarda mümkün değil. Detaylar için [şu sayafayı](https://www.mongodb.com/docs/manual/core/transactions/#create-collections-and-indexes-in-a-transaction) ziyaret ediniz.
 - Cross-shard olmasa dahi farklı shard'larda collection oluşturulamaz.
 - non-CRUD ve no-informational işlemler yapılamaz. Örneğin kullanıcı oluşturmak, count almak vb. 
+- Multi document transaction'da desteklenenen operasyonlar ve detayları için [şu linki](https://www.mongodb.com/docs/manual/core/transactions-operations/#operations-supported-in-multi-document-transactions) ziyaret ediniz.
 
 
 
@@ -108,22 +109,56 @@ session.endSession();
 ```
 
 
-Bakılmalı
+MongoDB'de causally consistent client session ile farklı seviyelerde causal consistence guarantee sağlanabilir. Consistency kavramı hakkında bilginiz yetersizse bu makale serisinin ilk yazısını okuyabilirsiniz.
 
-https://www.mongodb.com/docs/manual/core/transactions/
+![causal-consistency-mongodb.png](files/causal-consistency-mongodb.png)
+[resim kaynak](https://www.mongodb.com/docs/manual/core/causal-consistency-read-write-concerns/)
 
-https://www.mongodb.com/docs/manual/core/transactions-sharded-clusters/ (production consideration)
-
-https://www.mongodb.com/docs/manual/core/causal-consistency-read-write-concerns/ (casula consistency tablo)
-
-https://dzone.com/articles/mongodb-consistency-levels-cappaclec-theorem (consistency matrix var)
-
-https://vkontech.com/causal-consistency-guarantees-in-mongodb-lamport-clock-cluster-time-operation-time-and-causally-consistent-sessions/
+Faydalanabileceğiniz diğer bir tablo da ise başarılı ve başarısız yazma işlemi durumlarında consistency'nin ne kadar kuvvetli olduğunu görebilirsiniz. 
+![mongodb-consistency-matrix.png](files/mongodb-consistency-matrix.png)
+[resim kaynak](https://dzone.com/articles/mongodb-consistency-levels-cappaclec-theorem)
 
 
-https://www.mongodb.com/blog/post/performance-best-practices-transactions-and-read--write-concerns (transactipon best practices)
+Bildiğiniz üzere Microsoft Azure Cosmos DB MongoDB API'si de sunmaktadır. Consistency seviyelerin native MongoDB ile karşılaştırmak için de alttaki tabloyu kullanabilirsiniz. Aynı zamanda native MongoDB consistency seviyelerini de verdiği için ekledim. 
+
+![consistency-model-mapping-mongodb.png](files/consistency-model-mapping-mongodb.png)
+[resim kaynak](https://docs.microsoft.com/en-us/azure/cosmos-db/mongodb/consistency-mapping)
 
 
+## Senaryolar Üzerinden Causal Consistency
+
+Senaryolara MongoDB'nin resmi sayfasında [şu linkten](https://www.mongodb.com/docs/manual/core/causal-consistency-read-write-concerns/#scenarios) ulaşabilirsiniz.
+
+- **Senaryo 1: Read Concern "majority" and Write concern "majority"**
+
+üstte verdiğimiz tabloya bakacak olursak böyle bir opsiyon ayarı bize Read own writes, Monotonic reads, Monotonic writes,  Writes follow reads garantilerinin hepsini verecektir. Bu kavramlar hakkında bilginiz yoksa yazı serisinin ilk makalesini okuyunuz. 
+
+![senaryo1.png](files/senaryo1.png)
+
+şekildeki örneği inceleyecek olursak.
+
+- S1 oturumunda yeni bir değer girilmiş ve quantity 200 olarak kaydedilmiş.
+- S2 oturumu ile quantity değeri W1 ile  50 olarak atanmış.
+- Yine S2 oturumu ile W1'de yazılan değer R1 ile okunmuş (Read on writes).
+- S3 oturumu ile W2'de A item'ı restock değeri true olarak update edilmiş (Monotonic writes,  Writes follow reads).
+- Yine S3 oturumu ile R2'de A item'ı okunmuş (Read on writes, Monotonic reads)
+
+
+- **Senaryo 2: Read Concern "local" and Write concern {w: 1}**
+
+üstte verdiğimiz tabloya bakacak olursak böyle bir opsiyon ayarı bize Read own writes, Monotonic reads, Monotonic writes,  Writes follow reads garantilerinin hiçbirini veremeyecektir.
+
+![senaryo2.png](files/senaryo2.png)
+
+- Read 2, Write 1'i ve ardından Write 2'yi değil, yalnızca Write 2'den sonraki bir durumu yansıtan S 3'ten verileri okur. Yani Read own writes sağlanmamış olur.
+- Read 2, Read 1'den sonraki bir durumu yansıtmayan S3'ten verileri okur (yani daha önceki bir durum, Read 1 tarafından okunan verileri yansıtmaz). Yani Monotonic reads sağlanamamış olur.
+- Write 2, Write 1'deki değişimi okumadan verinin ilk halini değiştirmektedir. Yani  Monotonic writes sağlanmamış olur.
+- Write 2 verinin ilk halini Write 1 den sonra Read 1 değerini görmeden yapar. Yani Write follow read sağlanmamış olur.
+
+
+
+
+## Sharded Replicated Ortamda Transaction Örnekleri
 
 
 
