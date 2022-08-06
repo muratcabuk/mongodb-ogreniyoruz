@@ -67,7 +67,7 @@ Dikkat etmemiz gereken bazı kısıtlar var.
 Daha önce de belirttiğimiz üzere MongoDB shell NodeJS'le tam uyumlu olduğu için dokümanları takip  ederken dil olarak NodeJS seçerek örnekleri MongoDB Shell üzerinde de yapmak mümkün.
 Örneklerde dil seçeneklerinde shell olmasa da [şu sayfada](https://www.mongodb.com/docs/manual/core/transactions-in-applications/#std-label-txn-mongo-shell-example) shell örneğini bulmak mümkün.
 
-İleride örneklerle daha da detaylı inceleyeceğiz. Aşağıda sadece ufak bir shell örneğini nasıl birşeyle karşılaşacağımız hakkında fikir vermesi adına paylaşıyorum
+İleride örneklerle daha da detaylı inceleyeceğiz. Aşağıda sadece ufak bir shell örneğini nasıl birşeyle karşılaşacağımız hakkında fikir vermesi adına paylaşıyorum. 
 
 ```javascript
 
@@ -87,7 +87,7 @@ coll1 = session.getDatabase("mydb1").foo;
 coll2 = session.getDatabase("mydb2").bar;
 
 
-// Transaction başlatılıyor.
+// Transaction başlatılıyor. read ve write concern opsiyonlarına dikkat ediniz.
 session.startTransaction( { readConcern: { level: "local" }, writeConcern: { w: "majority" } } );
 
 
@@ -155,20 +155,426 @@ Senaryolara MongoDB'nin resmi sayfasında [şu linkten](https://www.mongodb.com/
 - Write 2, Write 1'deki değişimi okumadan verinin ilk halini değiştirmektedir. Yani  Monotonic writes sağlanmamış olur.
 - Write 2 verinin ilk halini Write 1 den sonra Read 1 değerini görmeden yapar. Yani Write follow read sağlanmamış olur.
 
-
-
-
 ## Sharded Replicated Ortamda Transaction Örnekleri
 
+Burada hızlıca oluşturacağız ancak sharded veritabanı ve collection oluşturma konusunda daha detaylı bilgi almak isterseniz serinin ikinci makalesini (MongoDB Kurulum, Konfigürasyon ve Basit CRUD işlemleri) okuyabilirsiniz.
+
+
+Burada hızlıca oluşturacağız.
+
+
+```javascript
+
+//sharded veritbanı oluşturuldu
+sh.enableSharding("myshardeddb")
+
+use myshardeddb
+
+
+// schema üzerinden de transaction örneği yapmak için schema ile birlikte collection oluşturuyoruz.
+
+db.createCollection("students", {
+   validator: {
+      $jsonSchema: {
+         bsonType: "object",
+         required: [ "name", "year", "major", "address" ],
+         properties: {
+            name: {
+               bsonType: "string",
+               description: "must be a string and is required"
+            },
+            year: {
+               bsonType: "int",
+               minimum: 2017,
+               maximum: 3017,
+               description: "must be an integer in [ 2017, 3017 ] and is required"
+            },
+            major: {
+               enum: [ "Math", "English", "Computer Science", "History", null ],
+               description: "can only be one of the enum values and is required"
+            },
+            gpa: {
+               bsonType: [ "double" ],
+               description: "must be a double if the field exists"
+            },
+            address: {
+               bsonType: "object",
+               required: [ "city" ],
+               properties: {
+                  street: {
+                     bsonType: "string",
+                     description: "must be a string if the field exists"
+                  },
+                  city: {
+                     bsonType: "string",
+                     description: "must be a string and is required"
+                  }
+               }
+            }
+         }
+      }
+   }
+})
+
+
+
+// oluşturduğumuz collection ı  sharded yapıyoruz
+sh.shardCollection("myshardeddb.students", { _id: 1 } )
+
+// diğer collection
+sh.shardCollection("myshardeddb.teachers", { _id: 1 } )
+
+```
+
+Öncelikle Students tablosuna biraz doğru kayıt girelim.
+
+```javascript
+
+db.students.insertMany( [{name: "Alice", year: Int32( 2020 ), major: "English", gpa: Double( 3.0 ), address: {
+      city: "NYC",
+      street: "33rd Street"
+   }},
+
+{name: "Alice2", year: Int32( 2019 ), major: "History", gpa: Double( 5.0 ), address: {
+      city: "NYC",
+      street: "33rd Street"
+   }}
+])
+```
+
+Verilerimizi kontrol edelim.
+
+```javascript
+db.students.find({}).pretty();
+
+
+// [
+//   {
+//     _id: ObjectId("62ee7ececa31592b7274f60f"),
+//     name: 'Alice',
+//     year: 2020,
+//     major: 'English',
+//     gpa: 3,
+//     address: { city: 'NYC', street: '33rd Street' }
+//   },
+//   {
+//     _id: ObjectId("62ee7ececa31592b7274f610"),
+//     name: 'Alice2',
+//     year: 2019,
+//     major: 'History',
+//     gpa: 5,
+//     address: { city: 'NYC', street: '33rd Street' }
+//   }
+// ]
+
+
+```
+
+- İlk örneğimizde transaciton içinde bir doküman kaydedip daha sonra abord edeceğiz.
+
+
+```javascript
+
+session = db.getMongo().startSession();
+studentCollection = session.getDatabase("myshardeddb").students;
+
+session.startTransaction();
+
+
+studentCollection.insertOne( 
+   {name: "Alice3", year: Int32( 2021 ), major: "English", gpa: Double( 3.0 ), 
+      address: {city: "NYC", street: "33rd Street"}
+   } 
+);
+
+// Kayıttan sonra aynı session içinde kontrol ettiğimizde kaydı görebiliri. 
+// ancak diğer sessionlarda bu kayır görülmeyecektir. Ancak commit edilirse görülebilir. 
+studentCollection.find();
+// [
+//   {
+//     _id: ObjectId("62ee7ececa31592b7274f60f"),
+//     name: 'Alice',
+//     year: 2020,
+//     major: 'English',
+//     gpa: 3,
+//     address: { city: 'NYC', street: '33rd Street' }
+//   },
+//   {
+//     _id: ObjectId("62ee7ececa31592b7274f610"),
+//     name: 'Alice2',
+//     year: 2019,
+//     major: 'History',
+//     gpa: 5,
+//     address: { city: 'NYC', street: '33rd Street' }
+//   },
+//   {
+//     _id: ObjectId("62ee9c09ca31592b7274f619"),
+//     name: 'Alice3',
+//     year: 2021,
+//     major: 'English',
+//     gpa: 3,
+//     address: { city: 'NYC', street: '33rd Street' }
+//   }
+// ]
+
+
+
+session.abortTransaction();
+
+
+//abord edildikten sonra kayıt sayısı tekrar ikiye düştü
+studentCollection.find()
+// [
+//   {
+//     _id: ObjectId("62ee7ececa31592b7274f60f"),
+//     name: 'Alice',
+//     year: 2020,
+//     major: 'English',
+//     gpa: 3,
+//     address: { city: 'NYC', street: '33rd Street' }
+//   },
+//   {
+//     _id: ObjectId("62ee7ececa31592b7274f610"),
+//     name: 'Alice2',
+//     year: 2019,
+//     major: 'History',
+//     gpa: 5,
+//     address: { city: 'NYC', street: '33rd Street' }
+//   }
+// ]
+
+session.endSession();
+```
+
+- Bu örnekte iki collection'a kayır girip abord edelim.
+
+```javascript
+
+
+session = db.getMongo().startSession();
+studentCollection = session.getDatabase("myshardeddb").students;
+
+teacherCollection = session.getDatabase("myshardeddb").teachers;
+
+session.startTransaction();
+
+
+studentCollection.insertOne( 
+   {name: "Alice3", year: Int32( 2021 ), major: "English", gpa: Double( 3.0 ), 
+      address: {city: "NYC", street: "33rd Street"}
+   } 
+);
+
+
+// Teacher collection boştu ilk kaydımızı eklemeye çalışıyoruz.
+teacherCollection.insertOne( 
+   {name: "Anita", age: Int32( 45 )} 
+);
+
+
+studentCollection.find();
+teacherCollection.find();
+
+session.abortTransaction();
+
+studentCollection.find();
+teacherCollection.find();
+
+session.endSession();
+```
+
+- Şimdi amacımız bir transaction oluşturup doğru bir kayıt girdikten sonra schema'ya uymayan bir kayıt girmeye çalışıp hata sonrası transaction'ın doğru girilen kaydı geri almasını sağlamak.
+
+
+
+```javascript
+// Session başlatılıyor. 
+session = db.getMongo().startSession();
+studentCollection = session.getDatabase("myshardeddb").students;
+
+// Transaction başlatılıyor. read ve write concern opsiyonlarına dikkat ediniz.
+session.startTransaction();
+
+
+try {
+
+   // doğru kayıt giriyoruz
+   studentCollection.insertOne( {name: "Alice3", year: Int32( 2021 ), major: "English", gpa: Double( 3.0 ), address: {
+      city: "NYC",
+      street: "33rd Street"
+   }} );
+
+studentCollection.find()
+
+// yanlış kayıt giriyoruz
+   studentCollection.insertOne( {name: "Alice3", year: Int32( 2021 ), major: "English", gpa: Int32( 3 ), address: {
+      city: "NYC",
+      street: "33rd Street"
+   }} );
+
+
+
+} catch (error) {
+
+// Hata olması durumunda transaction abort ediliyor.
+   session.abortTransaction();
+
+   print("hata oldu transaction abord edildi")
+
+  //throw error;
+}
+
+session.endSession();
+
+
+//sonuöta yine iki kayır görünecek
+db.students.find({})
+
+```
+
+- Birde read ve write concern ayarlarını kullanarak örnek yapalım.
+
+
+```javascript
+// Session başlatılıyor. 
+session = db.getMongo().startSession( { readPreference: { mode: "primary" } } );
+studentCollection = session.getDatabase("myshardeddb").students;
+
+// Transaction başlatılıyor. read ve write concern opsiyonlarına dikkat ediniz.
+session.startTransaction( { readConcern: { level: "majority" }, writeConcern: { w: "majority" } } );
+
+
+try {
+
+   // doğru kayıt giriyoruz
+   studentCollection.insertOne( {name: "Alice3", year: Int32( 2021 ), major: "English", gpa: Double( 3.0 ), address: {
+      city: "NYC",
+      street: "33rd Street"
+   }} );
+
+
+
+// yanlış kayıt giriyoruz
+   studentCollection.insertOne( {name: "Alice3", year: Int32( 2021 ), major: "English", gpa: Int32( 3 ), address: {
+      city: "NYC",
+      street: "33rd Street"
+   }} );
+
+
+
+} catch (error) {
+
+// Hata olması durumunda transaction abort ediliyor.
+   session.abortTransaction();
+
+   print("hata oldu transaction abord edildi")
+
+   throw error;
+}
+
+
+// sonuç
+
+// hata oldu transaction abord edildi
+// Uncaught:
+// MongoServerError: Document failed validation
+// Additional information: {
+//   failingDocumentId: ObjectId("62ee98d9ca31592b7274f618"),
+//   details: {
+//     operatorName: '$jsonSchema',
+//     schemaRulesNotSatisfied: [
+//       {
+//         operatorName: 'properties',
+//         propertiesNotSatisfied: [ { propertyName: 'gpa', details: [ [Object] ] } ]
+//       }
+//     ]
+//   }
+// }
 
 
 
 
+// üstte hata olacağı için bu satıra gerek yok ancak driver kullanırken tabiik ieklemek gerekiyor. hata olmazsa yapılan kayırların commit edilmesi gerekli
+//session.commitTransaction();
+session.endSession();
+
+```
+
+- Son olarak birde doğru kayır girerek verilerimizi commit'leyelim.
+
+
+```javascript
+
+session = db.getMongo().startSession();
+studentCollection = session.getDatabase("myshardeddb").students;
+
+session.startTransaction();
+
+
+studentCollection.insertOne( 
+   {name: "Alice3", year: Int32( 2021 ), major: "English", gpa: Double( 3.0 ), 
+      address: {city: "NYC", street: "33rd Street"}
+   } 
+);
+
+
+session.commitTransaction();
+
+//sonuç
+
+// {
+//   ok: 1,
+//   '$clusterTime': {
+//     clusterTime: Timestamp({ t: 1659807915, i: 1 }),
+//     signature: {
+//       hash: Binary(Buffer.from("05858e874177a2dfe07ce3c2605385eec5bc030e", "hex"), 0),
+//       keyId: Long("7119176866014953490")
+//     }
+//   },
+//   operationTime: Timestamp({ t: 1659807915, i: 1 }),
+//   recoveryToken: { recoveryShardId: 'shard1' }
+// }
 
 
 
+session.endSession();
+
+db.students.find({})
 
 
+// sonuç olarka üçüncü öğrenci kaydedilmiş oldu.
+
+// [
+//   {
+//     _id: ObjectId("62ee7ececa31592b7274f60f"),
+//     name: 'Alice',
+//     year: 2020,
+//     major: 'English',
+//     gpa: 3,
+//     address: { city: 'NYC', street: '33rd Street' }
+//   },
+//   {
+//     _id: ObjectId("62ee7ececa31592b7274f610"),
+//     name: 'Alice2',
+//     year: 2019,
+//     major: 'History',
+//     gpa: 5,
+//     address: { city: 'NYC', street: '33rd Street' }
+//   },
+//   {
+//     _id: ObjectId("62eea870ca31592b7274f61e"),
+//     name: 'Alice3',
+//     year: 2021,
+//     major: 'English',
+//     gpa: 3,
+//     address: { city: 'NYC', street: '33rd Street' }
+//   }
+// ]
+
+
+
+```
+Umarım faydalı olmuştur. 
 
 
 # Kaynaklar
